@@ -3,9 +3,6 @@ var express = require("express");
 var _ = require("underscore");
 var util = require('util');
 var xmlparser = require('express-xml-bodyparser');
-var req = require('request').defaults({
-  strictSSL: false
-});
 
 // ExpressJS Setup
 var app = express();
@@ -15,31 +12,69 @@ var port = 8080;
 var my_url = "/webhook";
 var shared_secret = process.env.SHARED_SECRET;
 if (shared_secret == null || shared_secret == "") {
+  shared_secret == null;
   console.log("WARNING: Authentication is DISABLED !");
   console.log("WARNING: Please add an environment variable named 'SHARED_SECRET' to enable authentication");
 } else {
   my_url += util.format("?shared_secret=%s", encodeURIComponent(shared_secret));
 }
 
-var failed = false;
-var sso = {};
-_.each(['SSO_REALM', 'SSO_HOSTNAME', 'SSO_CLIENT_ID', 'SSO_SERVICE_USERNAME', 'SSO_SERVICE_PASSWORD'], (item) => {
-  if ((item in process.env) && (process.env[item] != null)) {
-    sso[item] = process.env[item];
-  } else {
-    console.log("ERROR: Environment variable '%s' is missing or empty.", item);
-    failed = true;
-  }
-});
+var handler_registry = {
+  application: []
+};
 
-if (failed) {
-  console.log("Exiting !")
-  process.exit(1)
+// Register and init all handlers
+var handlers = (process.env.WEBHOOKS_MODULES == null ? [] : process.env.WEBHOOKS_MODULES.split(","));
+handlers = _.chain(handlers)
+            .map((i) => { return i.trim(); })
+            .reject((i) => { return i == ""; })
+            .value();
+if (handlers.length == 0) {
+  console.log("WARNING: no handler registered ! This server won't do anything useful...");
+  console.log("WARNING: Use the environment variable 'WEBHOOKS_MODULES' to pass a list of coma separated values of modules to load");
+} else {
+  console.log("Found %d webhooks handlers !", handlers.length);
 }
 
-var webhooks_handlers = {
-  application: handle_application
-};
+var handler_state = {};
+_.each(handlers, (i) => {
+  var state = {};
+  var handler = null;
+  try {
+    handler = require(util.format("./%s.js", i));
+    state.loaded = true;
+  } catch (e) {
+    state.loaded = false;
+    state.error = e.message || "UNKNOWN";
+  }
+
+  if (state.loaded) {
+    try {
+      handler.init();
+      state.initialized = true;
+    } catch (e) {
+      state.initialized = false;
+      state.error = e.message || "UNKNOWN";
+    }
+  }
+
+  var registered_types = [];
+  if (state.initialized) {
+    try {
+      registered_types = handler.register(_.keys(handler_registry));
+      state.registered = true;
+    } catch (e) {
+      state.registered = false;
+      state.error = e.message || "UNKNOWN";
+    }
+  }
+
+  _.each(registered_types, (t) => {
+    handler_registry[t].push({ name: i, handler: handler});
+  });
+
+  handler_state[i] = state;
+});
 
 // Log every request
 router.use(function (req,res,next) {
@@ -60,7 +95,13 @@ router.get("/",function(req,res){
                ],
     documentation: {
       "GitHub": "https://github.com/nmasse-itix/3scale-webhooks-sample"
-    }
+    },
+    handlersByType: _.mapObject(handler_registry, (v, k) => {
+      return _.map(v, (i) => {
+        return i.name;
+      });
+    }),
+    handlersState: handler_state
   };
   success(res, 200, response);
 });
@@ -73,6 +114,10 @@ router.get("/webhook",function(req,res){
 
 // Handle Webhook
 router.post("/webhook",function(req,res){
+  if (shared_secret != null && req.query.shared_secret != shared_secret) {
+    return error(res, 403, "Wrong shared secret !")
+  }
+
   var payload = req.body;
   if (payload == null) {
     return error(res, 400, "No body sent !");
@@ -90,44 +135,85 @@ router.post("/webhook",function(req,res){
     return error(res, 400, "No object found in payload !");
   }
 
-  if (type in webhooks_handlers) {
-    return webhooks_handlers[type](res, action, type, obj);
+  if (!(type in handler_registry)) {
+    return error(res, 412, util.format("No such type '%s'", type));
+  }
+
+  if (handler_registry[type].length > 0) {
+    try {
+      run_handlers(res, action, type, obj);
+    } catch (e) {
+      return error(res, 500, e.message);
+    }
   } else {
-    error(res, 412, util.format("No handlers to handle '%s'", type));
+    return error(res, 412, util.format("No handlers to handle '%s'", type));
   }
 });
 
-function handle_application(res, action, type, app) {
-  console.log("action = %s, type = %s", action, type);
-  console.log(app);
-
-  var client = {
-    clientId: app.application_id,
-    clientAuthenticatorType: "client-secret",
-    secret: app.keys.key,
-    redirectUris: [ app.redirect_url ],
-    publicClient: false,
-    name: app.name,
-    description: app.description
+function run_handlers(res, action, type, obj) {
+  var results = [];
+  var next = () => {
+    success(res, 200, results);
   };
 
-  authenticate_to_sso(res, (access_token) => {
-    get_sso_client(res, client.clientId, access_token, (sso_client) => {
-      if (sso_client == null) {
-        console.log("Could not find a client, creating it...");
-        create_sso_client(res, access_token, client, (response) => {
-          console.log("OK, client created !")
-          success(res, 200, "TODO");
-        });
-      } else {
-        console.log("Found an existing client with id = %s", sso_client.id);
-        update_sso_client(res, access_token, client, sso_client.id, (response) => {
-          console.log("OK, client updated !")
-          success(res, 200, "TODO");
-        });
-      }
-    });
+  // Build the handler chain
+  var handlers = pairs(handler_registry[type]);
+  _.each(handlers, (i) => {
+    var prev = i[0];
+    var current = i[1];
+    next = get_handler_wrapper(prev, current, next, results, action, type, obj);
   });
+
+  // Run it
+  next();
+}
+
+function get_handler_wrapper(prev, current, next, results, action, type, obj) {
+  return (status) => {
+    try {
+      // Convert the status to string if needed
+      if (status == null) {
+        status = "UNKNOWN";
+      } else if (status instanceof Error) {
+        // Error objects translate to empty object during JSON serialization.
+        // That's why we convert it to string before...
+        status = status.toString();
+      } // else, passthrough
+
+      // Start of the loop, no status to fetch
+      if (prev != null) {
+        results.push({ name: prev.name, result: status });
+      }
+
+      // Call the next handler
+      if (current != null) {
+        current.handler.handle(action, type, obj, next);
+      } else {
+        next(); // End of the loop: call the last function to return results to caller
+      }
+    } catch (e) {
+      if (next != null) {
+        next(e);
+      } else {
+        console.log(e);
+      }
+    }
+  };
+}
+
+// Converts an array as an array of pairs, in the reverse order.
+//
+// Example:
+// [1, 2, 3] => [[3, null], [2, 3], [1, 2], [null, 1]]
+//
+function pairs(a) {
+  var r = [];
+  r.push([a[a.length - 1], null]);
+  for (var i = a.length - 1; i > 0; i--) {
+    r.push([a[i-1], a[i]]);
+  }
+  r.push([null, a[0]]);
+  return r;
 }
 
 //
@@ -165,116 +251,4 @@ function success(res, code, response) {
   return res.status(code)
             .type("application/json")
             .send(JSON.stringify(response));
-}
-
-function get_sso_client(res, client_id, access_token, next) {
-  req.get({
-    url: util.format("https://%s/auth/admin/realms/%s/clients", sso.SSO_HOSTNAME, sso.SSO_REALM),
-    headers: {
-      "Authorization": "Bearer " + access_token
-    },
-    qs: {
-      clientId: client_id
-    }
-  }, (err, response, body) => {
-    if (err) {
-      return error(res, 500, err);
-    }
-    console.log("Got a %d response from SSO", response.statusCode);
-
-    if (response.statusCode == 200) {
-      try {
-        var json_response = JSON.parse(body);
-        var sso_client = null;
-        console.log("Found %d clients", json_response.length);
-        if (json_response.length == 1) {
-          sso_client = json_response[0];
-          console.log("Picking the first one : '%s', with id = %s", sso_client.clientId, sso_client.id);
-        } else if (json_response.length > 1) {
-          console.log("Too many matching clients (%d). Refusing to do anything.", json_response.length);
-          return error(res, 500, util.format("Too many matching clients (%d). Refusing to do anything.", json_response.length));
-        }
-        next(sso_client);
-      } catch (err) {
-        return error(res, 500, err);
-      }
-    } else {
-      return error(res, 500, util.format("Got a %d response from SSO while trying to check if client exists", response.statusCode));
-    }
-  });
-}
-
-function create_sso_client(res, access_token, client, next) {
-  req.post(util.format("https://%s/auth/admin/realms/%s/clients", sso.SSO_HOSTNAME, sso.SSO_REALM), {
-    headers: {
-      "Authorization": "Bearer " + access_token
-    },
-    json: client
-  }, (err, response, body) => {
-    if (err) {
-      return error(res, 500, err);
-    }
-    console.log("Got a %d response from SSO", response.statusCode);
-    if (response.statusCode == 201) {
-      try {
-        var client = JSON.parse(body);
-        next(client);
-      } catch (err) {
-        return error(res, 500, err);
-      }
-    } else {
-      return error(res, 500, util.format("Got a %d response from SSO while creating client", response.statusCode));
-    }
-  });
-}
-
-function update_sso_client(res, access_token, client, id, next) {
-  req.put(util.format("https://%s/auth/admin/realms/%s/clients/%s", sso.SSO_HOSTNAME, sso.SSO_REALM, id), {
-    headers: {
-      "Authorization": "Bearer " + access_token
-    },
-    json: client
-  }, (err, response, body) => {
-    if (err) {
-      return error(res, 500, err);
-    }
-    console.log("Got a %d response from SSO", response.statusCode);
-    if (response.statusCode == 204) {
-      try {
-        next();
-      } catch (err) {
-        return error(res, 500, err);
-      }
-    } else {
-      return error(res, 500, util.format("Got a %d response from SSO while updating client", response.statusCode));
-    }
-  });
-}
-
-function authenticate_to_sso(res, next) {
-  console.log("Authenticating to SSO (realm = '%s') using the ROPC OAuth flow with %s/%s", sso.SSO_REALM, sso.SSO_SERVICE_USERNAME, sso.SSO_SERVICE_PASSWORD);
-  req.post(util.format("https://%s/auth/realms/%s/protocol/openid-connect/token", sso.SSO_HOSTNAME, sso.SSO_REALM), {
-    form: {
-      grant_type: "password",
-      client_id: sso.SSO_CLIENT_ID,
-      username: sso.SSO_SERVICE_USERNAME,
-      password: sso.SSO_SERVICE_PASSWORD
-    }
-  }, (err, response, body) => {
-      if (err) {
-        return error(res, 500, err);
-      }
-      console.log("Got a %d response from SSO", response.statusCode);
-      if (response.statusCode == 200) {
-        try {
-          var json_response = JSON.parse(body);
-          console.log("Got an access token from SSO: %s", json_response.access_token);
-          next(json_response.access_token);
-        } catch (err) {
-          return error(res, 500, err);
-        }
-      } else {
-        return error(res, 500, util.format("Got a %d response from SSO while authenticating", response.statusCode));
-      }
-  });
 }
