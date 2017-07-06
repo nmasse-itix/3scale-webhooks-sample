@@ -4,12 +4,12 @@
 
 This project is a framework to ease the use of WebHooks with 3scale.
 It also provides out-of-the-box a sample implementation that synchronizes
-3scale applications with Red Hat SSO clients.
+3scale applications with Red Hat SSO clients (useful if you are implementing OAuth).
 
 ## Quick start
 
 If you are interested only in the app/client synchronization between 3scale
-and Red Hat SSO, here are the instruction.
+and Red Hat SSO, follow the instructions below.
 
 First of all, Red Hat SSO needs to be deployed with the `SSO_SERVICE_USERNAME`
 and `SSO_SERVICE_PASSWORD` environment variables. If not already done, update
@@ -32,11 +32,11 @@ The possible environment variables are explained below:
 
 | Environment Variable | Description | Required ? |
 | --- | --- | --- |
-| SSO_REALM | The SSO Realm in which we need to sync the clients. If your followed my documentations so, I use "3scale" as a convention. | Yes |
+| SSO_REALM | The SSO Realm in which we need to sync the clients. If you followed my documentations so far, I use "3scale" as a convention. | Yes |
 | SSO_HOSTNAME | The hostname of your SSO server or OpenShift route. (Just the hostname, without https:// or a path) | Yes |
 | SSO_SERVICE_USERNAME | The username we need to use to connect to Red Hat SSO | Yes |
 | SSO_SERVICE_PASSWORD | The password we need to use to connect to Red Hat SSO | Yes |
-| SSO_CLIENT_ID | The client id we need to use to connect to Red Hat SSO. In every SSO installation, there is one named 'admin-cli'. | Yes |
+| SSO_CLIENT_ID | The client id we need to use to connect to Red Hat SSO. In every SSO installation, there is one named `admin-cli`. | Yes |
 | SHARED_SECRET | A shared secret between 3scale and the webhooks server in order to prevent anyone from submitting webhooks. | No |
 | WEBHOOKS_MODULES | A coma separated list of modules to load and use as handlers. Two modules are provided with this project: `sso` and `log` | Yes |
 
@@ -48,6 +48,10 @@ For instance:
 ```
 http://webhooks-3scale.app.openshift.test/webhook?shared_secret=supersecret
 ```
+
+Do not forget to enable Webhooks and check `Dashboard actions fire webhooks` !
+
+![3scale screenshot](doc/img/webhook_screenshot.png)
 
 ## Developing a module
 
@@ -61,7 +65,7 @@ The `init` method can be used to initialize your module, such as reading configu
 initializing variables, etc.
 
 The `register` method is used to choose the kind of webhooks you want to receive.
-To do this, you have to filter the list of available webhooks that your receives as
+To do this, you have to filter the list of available webhooks that you receive as
 a parameter and return the filtered list.
 
 Currently, available types are :
