@@ -9,6 +9,7 @@ var app = express();
 var router = express.Router();
 var port = 8080;
 
+// Security is ensured by a Shared Secret
 var my_url = "/webhook";
 var shared_secret = process.env.SHARED_SECRET;
 if (shared_secret == null || shared_secret == "") {
@@ -19,14 +20,15 @@ if (shared_secret == null || shared_secret == "") {
   my_url += util.format("?shared_secret=%s", encodeURIComponent(shared_secret));
 }
 
-//
+// The handler registry stores a list of handler for each kind of webhook
 var handler_registry = {
   application: [],
   user: [],
   account: []
 };
 
-// Register and init all handlers
+// Parse the WEBHOOKS_MODULES environment variable to extract the list of handlers
+// The format is a coma separated list of modules. Modules are the filename minus '.js'.
 var handlers = (process.env.WEBHOOKS_MODULES == null ? [] : process.env.WEBHOOKS_MODULES.split(","));
 handlers = _.chain(handlers)
             .map((i) => { return i.trim(); })
@@ -39,10 +41,17 @@ if (handlers.length == 0) {
   console.log("Found %d webhooks handlers !", handlers.length);
 }
 
+// Each handler goes in a three stage process:
+//  - LOAD : the JS file is loaded via "require"
+//  - INIT : the handler is initialized (it can read configuration, initialize variables, etc.)
+//  - REGISTER : the handler filters a list of webhook kinds to retain only the ones it can handle
+//
 var handler_state = {};
 _.each(handlers, (i) => {
   var state = {};
   var handler = null;
+
+  // LOAD
   try {
     handler = require(util.format("./%s.js", i));
     state.loaded = true;
@@ -51,6 +60,7 @@ _.each(handlers, (i) => {
     state.error = e.message || "UNKNOWN";
   }
 
+  // INIT
   if (state.loaded) {
     try {
       handler.init();
@@ -61,6 +71,7 @@ _.each(handlers, (i) => {
     }
   }
 
+  // REGISTER
   var registered_types = [];
   if (state.initialized) {
     try {
@@ -153,8 +164,21 @@ router.post("/webhook",function(req,res){
   }
 });
 
+// The handlers are run in order, each one in turn. Each handler can provide a status.
+// At the end, the statuses are returned to the caller.
+//
+// Since handlers can involves async processing (such as HTTP Requests), a chain of handlers
+// is built and each handler is responsible for calling the next handler.
+//
+// In order to build this chain of handler, we start from the end, up to the begining.
+// Then, we call the first handler of the chain, that calls the second one, that
+// calls in turn the third one, etc. up to the final stage that returns results to
+// the caller.
+//
 function run_handlers(res, action, type, obj) {
   var results = [];
+
+  // Final stage
   var next = () => {
     success(res, 200, results);
   };
@@ -171,6 +195,13 @@ function run_handlers(res, action, type, obj) {
   next();
 }
 
+// This function builds one item of the chain: it returns two linked functions.
+//
+// The first function process the status of the previous item
+// The first function calls a second function: the handler of the current item
+//
+// Since the chain is built in reverse order, we end up with the first item of the chain
+//
 function get_handler_wrapper(prev, current, next, results, action, type, obj) {
   return (status) => {
     try {
