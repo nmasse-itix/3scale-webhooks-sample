@@ -112,11 +112,15 @@ function handle_application(res, action, type, app) {
   authenticate_to_sso(res, (access_token) => {
     get_sso_client(res, client.client_id, access_token, (sso_client) => {
       if (sso_client == null) {
+        console.log("Could not find a client, creating it...");
         create_sso_client(res, access_token, client, (response) => {
+          console.log("OK, client created !")
           success(res, 200, "TODO");
         });
       } else {
+        console.log("Found an existing client with id = %d", sso_client.id);
         update_sso_client(res, access_token, client, sso_client.id, (response) => {
+          console.log("OK, client updated !")
           success(res, 200, "TODO");
         });
       }
