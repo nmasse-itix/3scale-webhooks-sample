@@ -97,7 +97,7 @@ router.post("/webhook",function(req,res){
 
 function handle_application(res, action, type, app) {
   console.log("action = %s, type = %s", action, type);
-  console.log(obj);
+  console.log(app);
 
   var client = {
     clientId: app.application_id,
