@@ -1,0 +1,16 @@
+{
+  "name": "3scale-sample-webhook",
+  "version": "0.0.1",
+  "description": "A sample app that handles 3scale webhooks",
+  "main": "server.js",
+  "scripts": {},
+  "author": "Nicolas MASSE",
+  "repository": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "latest",
+    "express-xml-bodyparser": "^0.3.0",
+    "request": "^2.81.0",
+    "underscore": "^1.8.3"
+  }
+}
