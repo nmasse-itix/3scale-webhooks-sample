@@ -57,7 +57,7 @@ router.get("/",function(req,res){
                  }
                ],
     documentation: {
-      "GitHub": "TODO"
+      "GitHub": "https://github.com/nmasse-itix/3scale-webhooks-sample"
     }
   };
   success(res, 200, response);

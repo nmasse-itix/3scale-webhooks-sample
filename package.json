@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {},
   "author": "Nicolas MASSE",
-  "repository": "",
+  "repository": "https://github.com/nmasse-itix/3scale-webhooks-sample",
   "license": "MIT",
   "dependencies": {
     "express": "latest",
