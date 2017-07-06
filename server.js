@@ -3,7 +3,9 @@ var express = require("express");
 var _ = require("underscore");
 var util = require('util');
 var xmlparser = require('express-xml-bodyparser');
-var req = require('request');
+var req = require('request').defaults({
+  strictSSL: false
+});
 
 // ExpressJS Setup
 var app = express();
@@ -110,7 +112,7 @@ function handle_application(res, action, type, app) {
   };
 
   authenticate_to_sso(res, (access_token) => {
-    get_sso_client(res, client.client_id, access_token, (sso_client) => {
+    get_sso_client(res, client.clientId, access_token, (sso_client) => {
       if (sso_client == null) {
         console.log("Could not find a client, creating it...");
         create_sso_client(res, access_token, client, (response) => {
@@ -118,7 +120,7 @@ function handle_application(res, action, type, app) {
           success(res, 200, "TODO");
         });
       } else {
-        console.log("Found an existing client with id = %d", sso_client.id);
+        console.log("Found an existing client with id = %s", sso_client.id);
         update_sso_client(res, access_token, client, sso_client.id, (response) => {
           console.log("OK, client updated !")
           success(res, 200, "TODO");
@@ -166,23 +168,39 @@ function success(res, code, response) {
 }
 
 function get_sso_client(res, client_id, access_token, next) {
-  req.get(util.format("https://%s/auth/admin/realms/%s/clients", sso.SSO_HOSTNAME, sso.SSO_REALM),
-  {
+  req.get({
+    url: util.format("https://%s/auth/admin/realms/%s/clients", sso.SSO_HOSTNAME, sso.SSO_REALM),
     headers: {
       "Authorization": "Bearer " + access_token
     },
     qs: {
       clientId: client_id
     }
-  }).on('response', (response) => {
-      var json_response = JSON.parse(response.body);
-      var sso_client = null;
-      if (json_response.length > 0) {
-        sso_client = json_response[0];
+  }, (err, response, body) => {
+    if (err) {
+      return error(res, 500, err);
+    }
+    console.log("Got a %d response from SSO", response.statusCode);
+
+    if (response.statusCode == 200) {
+      try {
+        var json_response = JSON.parse(body);
+        var sso_client = null;
+        console.log("Found %d clients", json_response.length);
+        if (json_response.length == 1) {
+          sso_client = json_response[0];
+          console.log("Picking the first one : '%s', with id = %s", sso_client.clientId, sso_client.id);
+        } else if (json_response.length > 1) {
+          console.log("Too many matching clients (%d). Refusing to do anything.", json_response.length);
+          return error(res, 500, util.format("Too many matching clients (%d). Refusing to do anything.", json_response.length));
+        }
+        next(sso_client);
+      } catch (err) {
+        return error(res, 500, err);
       }
-      next(sso_client);
-  }).on('error', (err) => {
-    return error(res, 500, err);
+    } else {
+      return error(res, 500, util.format("Got a %d response from SSO while trying to check if client exists", response.statusCode));
+    }
   });
 }
 
@@ -192,40 +210,71 @@ function create_sso_client(res, access_token, client, next) {
       "Authorization": "Bearer " + access_token
     },
     json: client
-  }).on('response', (response) => {
-      var client = JSON.parse(response.body);
-      next(client);
-  }).on('error', (err) => {
-    return error(res, 500, err);
+  }, (err, response, body) => {
+    if (err) {
+      return error(res, 500, err);
+    }
+    console.log("Got a %d response from SSO", response.statusCode);
+    if (response.statusCode == 201) {
+      try {
+        var client = JSON.parse(body);
+        next(client);
+      } catch (err) {
+        return error(res, 500, err);
+      }
+    } else {
+      return error(res, 500, util.format("Got a %d response from SSO while creating client", response.statusCode));
+    }
   });
 }
 
 function update_sso_client(res, access_token, client, id, next) {
-  req.put(util.format("https://%s/auth/admin/realms/%s/clients/%d", sso.SSO_HOSTNAME, sso.SSO_REALM, id), {
+  req.put(util.format("https://%s/auth/admin/realms/%s/clients/%s", sso.SSO_HOSTNAME, sso.SSO_REALM, id), {
     headers: {
       "Authorization": "Bearer " + access_token
     },
     json: client
-  }).on('response', (response) => {
-      var client = JSON.parse(response.body);
-      next(client);
-  }).on('error', (err) => {
-    return error(res, 500, err);
+  }, (err, response, body) => {
+    if (err) {
+      return error(res, 500, err);
+    }
+    console.log("Got a %d response from SSO", response.statusCode);
+    if (response.statusCode == 204) {
+      try {
+        next();
+      } catch (err) {
+        return error(res, 500, err);
+      }
+    } else {
+      return error(res, 500, util.format("Got a %d response from SSO while updating client", response.statusCode));
+    }
   });
 }
 
 function authenticate_to_sso(res, next) {
+  console.log("Authenticating to SSO (realm = '%s') using the ROPC OAuth flow with %s/%s", sso.SSO_REALM, sso.SSO_SERVICE_USERNAME, sso.SSO_SERVICE_PASSWORD);
   req.post(util.format("https://%s/auth/realms/%s/protocol/openid-connect/token", sso.SSO_HOSTNAME, sso.SSO_REALM), {
     form: {
       grant_type: "password",
       client_id: sso.SSO_CLIENT_ID,
       username: sso.SSO_SERVICE_USERNAME,
       password: sso.SSO_SERVICE_PASSWORD
-    },
-  }).on('response', (response) => {
-      var json_response = JSON.parse(response.body);
-      next(json_response.access_token);
-  }).on('error', (err) => {
-    return error(res, 500, err);
+    }
+  }, (err, response, body) => {
+      if (err) {
+        return error(res, 500, err);
+      }
+      console.log("Got a %d response from SSO", response.statusCode);
+      if (response.statusCode == 200) {
+        try {
+          var json_response = JSON.parse(body);
+          console.log("Got an access token from SSO: %s", json_response.access_token);
+          next(json_response.access_token);
+        } catch (err) {
+          return error(res, 500, err);
+        }
+      } else {
+        return error(res, 500, util.format("Got a %d response from SSO while authenticating", response.statusCode));
+      }
   });
 }
