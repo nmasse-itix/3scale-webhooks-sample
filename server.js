@@ -19,8 +19,11 @@ if (shared_secret == null || shared_secret == "") {
   my_url += util.format("?shared_secret=%s", encodeURIComponent(shared_secret));
 }
 
+//
 var handler_registry = {
-  application: []
+  application: [],
+  user: [],
+  account: []
 };
 
 // Register and init all handlers
