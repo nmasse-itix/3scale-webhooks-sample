@@ -1,5 +1,5 @@
 {
-  "name": "3scale-sample-webhook",
+  "name": "3scale-webhooks-sample",
   "version": "0.0.1",
   "description": "A sample app that handles 3scale webhooks",
   "main": "server.js",
