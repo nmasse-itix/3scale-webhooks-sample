@@ -38,30 +38,65 @@ exports.init = sso_init;
 
 
 function handle_application(action, type, app, next) {
+  // Safety check: only create apps for OAuth enabled apps
+  // We know that an app is OAuth enabled if there is a redirect_url
+  // element in the webhooks payload. The element can be empty but it has to be there.
+  if (!("redirect_url" in app)) {
+    console.log("No redirect_url found in app description (not OAuth ?). Skipping client creation...");
+    return next("No redirect_url found in app description (not OAuth ?)");
+  }
+
+  // Base Payload for app creation/update
   var client = {
     clientId: app.application_id,
-    clientAuthenticatorType: "client-secret",
-    secret: app.keys.key,
-    redirectUris: [ app.redirect_url ],
-    publicClient: false,
     name: app.name,
     description: app.description
   };
 
+  // Add the client_secret to the client creation payload when found
+  if ('keys' in app && 'key' in app.keys && app.keys.key != null) {
+    console.log("Found a client_secret : '%s'", app.keys.key);
+    client.secret = app.keys.key;
+    client.clientAuthenticatorType = "client-secret";
+    client.publicClient = false;
+  }
+
+  // Add the redirect_url to the client creation payload when found
+  if (app.redirect_url != null && app.redirect_url != "") {
+    console.log("Found a redirect_url : '%s'", app.redirect_url);
+    client.redirectUris = [ app.redirect_url ];
+  }
+
   authenticate_to_sso(next, (access_token) => {
     get_sso_client(client.clientId, access_token, next, (sso_client) => {
-      if (sso_client == null) {
-        console.log("Could not find a client, creating it...");
-        create_sso_client(access_token, client, (response) => {
-          console.log("OK, client created !")
+      if (action == "updated" || action == "created") {
+        if (sso_client == null) {
+          console.log("Could not find a client, creating it...");
+          create_sso_client(access_token, client, (response) => {
+            console.log("OK, client created !")
+            next('SUCCESS');
+          });
+        } else {
+          console.log("Found an existing client with id = %s", sso_client.id);
+          update_sso_client(access_token, client, sso_client.id, next, (response) => {
+            console.log("OK, client updated !");
+            next('SUCCESS');
+          });
+        }
+      } else if (action == "deleted") {
+        if (sso_client == null) {
+          console.log("Could not find a matching client...");
+          return next('Nothing done, could not find a matching client.');
+        }
+
+        console.log("Deleting client with id = %s", sso_client.id);
+        delete_sso_client(access_token, sso_client.id, next, (response) => {
+          console.log("OK, client deleted !");
           next('SUCCESS');
         });
       } else {
-        console.log("Found an existing client with id = %s", sso_client.id);
-        update_sso_client(access_token, client, sso_client.id, next, (response) => {
-          console.log("OK, client updated !");
-          next('SUCCESS');
-        });
+        console.log("Unkown action '%s'", action);
+        next(util.format("Unknown action '%s'", action));
       }
     });
   });
@@ -135,6 +170,28 @@ function update_sso_client(access_token, client, id, error, next) {
       "Authorization": "Bearer " + access_token
     },
     json: client
+  }, (err, response, body) => {
+    if (err) {
+      return error(err);
+    }
+    console.log("Got a %d response from SSO", response.statusCode);
+    if (response.statusCode == 204) {
+      try {
+        next();
+      } catch (err) {
+        return error(err);
+      }
+    } else {
+      return error(util.format("Got a %d response from SSO while updating client", response.statusCode));
+    }
+  });
+}
+
+function delete_sso_client(access_token, id, error, next) {
+  req.delete(util.format("https://%s/auth/admin/realms/%s/clients/%s", config.SSO_HOSTNAME, config.SSO_REALM, id), {
+    headers: {
+      "Authorization": "Bearer " + access_token
+    }
   }, (err, response, body) => {
     if (err) {
       return error(err);
