@@ -36,6 +36,7 @@ The possible environment variables are explained below:
 | SSO_HOSTNAME | The hostname of your SSO server or OpenShift route. (Just the hostname, without https:// or a path) | Yes |
 | SSO_SERVICE_USERNAME | The username we need to use to connect to Red Hat SSO | Yes |
 | SSO_SERVICE_PASSWORD | The password we need to use to connect to Red Hat SSO | Yes |
+| SSO_AUTH_REALM | The realm used to authenticate the service user. Defaults to SSO_REALM if not provided. | No |
 | SSO_CLIENT_ID | The client id we need to use to connect to Red Hat SSO. In every SSO installation, there is one named `admin-cli`. | Yes |
 | SHARED_SECRET | A shared secret between 3scale and the webhooks server in order to prevent anyone from submitting webhooks. | No |
 | WEBHOOKS_MODULES | A coma separated list of modules to load and use as handlers. Two modules are provided with this project: `sso` and `log` | Yes |
@@ -52,6 +53,29 @@ http://webhooks-3scale.app.openshift.test/webhook?shared_secret=supersecret
 Do not forget to enable Webhooks and check `Dashboard actions fire webhooks` !
 
 ![3scale screenshot](doc/img/webhook_screenshot.png)
+
+**Note about the admin/service user:**
+
+To be able to create clients in Red Hat SSO, you need to provide a valid user with
+administrative privileges.
+
+One way to do so is by setting the `SSO_SERVICE_USERNAME` and `SSO_SERVICE_PASSWORD`
+environment variables on the SSO DeploymentConfig as explained above. It will create
+user for you with the correct rights.
+
+If you want to use the built-in `admin` user, it is possible but you have to be aware
+that the `admin` user lays in the `master` realm. So you will have to pass the
+`SSO_AUTH_REALM` environment variable.
+
+For instance, if you want to create clients in the `3scale` realm and you want to
+use the default `admin` user to do this, you will have to use the following variables:
+
+```
+SSO_SERVICE_USERNAME=admin
+SSO_SERVICE_PASSWORD=secret
+SSO_AUTH_REALM=master
+SSO_REALM=3scale
+```
 
 ## Developing a module
 
@@ -111,7 +135,7 @@ run NodeJS locally:
 
 ```
 export SSO_REALM=3scale
-export SSO_HOSTNAME=sso-secure-sso.app.openshift.test
+export SSO_HOSTNAME=secure-sso-sso.app.openshift.test
 export SSO_CLIENT_ID=admin-cli
 export SSO_SERVICE_USERNAME=cli
 export SSO_SERVICE_PASSWORD=secret

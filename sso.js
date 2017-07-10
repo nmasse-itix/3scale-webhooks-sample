@@ -20,6 +20,11 @@ function sso_init() {
   if (failed) {
     throw new Error("Missing configuration");
   }
+
+  // Handle optional environment variables
+  if ('SSO_AUTH_REALM' in process.env && process.env.SSO_AUTH_REALM != null) {
+    config.SSO_AUTH_REALM = process.env.SSO_AUTH_REALM;
+  }
 }
 
 function sso_register(types) {
@@ -210,8 +215,9 @@ function delete_sso_client(access_token, id, error, next) {
 }
 
 function authenticate_to_sso(error, next) {
-  console.log("Authenticating to SSO (realm = '%s') using the ROPC OAuth flow with %s/%s", config.SSO_REALM, config.SSO_SERVICE_USERNAME, config.SSO_SERVICE_PASSWORD);
-  req.post(util.format("https://%s/auth/realms/%s/protocol/openid-connect/token", config.SSO_HOSTNAME, config.SSO_REALM), {
+  var realm = config.SSO_AUTH_REALM || config.SSO_REALM;
+  console.log("Authenticating to SSO (realm = '%s') using the ROPC OAuth flow with %s/%s", realm, config.SSO_SERVICE_USERNAME, config.SSO_SERVICE_PASSWORD);
+  req.post(util.format("https://%s/auth/realms/%s/protocol/openid-connect/token", config.SSO_HOSTNAME, realm), {
     form: {
       grant_type: "password",
       client_id: config.SSO_CLIENT_ID,
@@ -232,6 +238,13 @@ function authenticate_to_sso(error, next) {
           return error(err);
         }
       } else {
+        console.log("Error while authenticating to SSO.");
+        if (config.SSO_AUTH_REALM == null && config.SSO_SERVICE_USERNAME == "admin" && config.SSO_REALM != "master") {
+          console.log("It looks like you are trying to authenticate with the built-in 'admin'");
+          console.log("user but you did not provide the SSO_AUTH_REALM environment variable.");
+          console.log("Re-try with 'SSO_AUTH_REALM=master' !");
+        }
+
         return error(util.format("Got a %d response from SSO while authenticating", response.statusCode));
       }
   });
