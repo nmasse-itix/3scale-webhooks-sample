@@ -11,15 +11,25 @@ It also provides out-of-the-box a sample implementation that synchronizes
 If you are interested only in the app/client synchronization between 3scale
 and Red Hat SSO, follow the instructions below.
 
-First of all, Red Hat SSO needs to be deployed with the `SSO_SERVICE_USERNAME`
-and `SSO_SERVICE_PASSWORD` environment variables. If not already done, update
-your DeploymentConfig:
+First of all, Red Hat SSO needs to be deployed with the `SSO_SERVICE_USERNAME`,
+`SSO_SERVICE_PASSWORD` and `SSO_REALM` environment variables. If not already done,
+update your DeploymentConfig:
 
 ```
 oc set env dc/sso SSO_SERVICE_USERNAME=cli
 oc set env dc/sso SSO_SERVICE_PASSWORD=secret
+oc set env dc/sso SSO_REALM=3scale
 oc rollout latest sso
 ```
+
+This will create a realm named `3scale`, containing a user `cli` that has
+administrative privileges on this realm.
+
+**NOTE:** If you created the realm by yourself, you have to create a user that has
+administrative privileges over this realm.
+Alternatively, you can use the built-in `admin` user but you have to be aware
+that the `admin` user lays in the `master` realm. So you will have to pass the
+`SSO_AUTH_REALM` environment variable accordingly (see below).
 
 Then, you can instantiate this project:
 
@@ -54,18 +64,11 @@ Do not forget to enable Webhooks and check `Dashboard actions fire webhooks` !
 
 ![3scale screenshot](doc/img/webhook_screenshot.png)
 
-**Note about the admin/service user:**
+## How to authenticate with the built-in `admin` user
 
-To be able to create clients in Red Hat SSO, you need to provide a valid user with
-administrative privileges.
-
-One way to do so is by setting the `SSO_SERVICE_USERNAME` and `SSO_SERVICE_PASSWORD`
-environment variables on the SSO DeploymentConfig as explained above. It will create
-user for you with the correct rights.
-
-If you want to use the built-in `admin` user, it is possible but you have to be aware
-that the `admin` user lays in the `master` realm. So you will have to pass the
-`SSO_AUTH_REALM` environment variable.
+You can use the built-in `admin` user as a service account to authenticate in Red Hat SSO.
+However, since the `admin` user lays in the `master` realm, you have to deploy this project
+with one additional environment variable: `SSO_AUTH_REALM`.
 
 For instance, if you want to create clients in the `3scale` realm and you want to
 use the default `admin` user to do this, you will have to use the following variables:
