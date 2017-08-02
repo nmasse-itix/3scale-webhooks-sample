@@ -80,6 +80,22 @@ SSO_AUTH_REALM=master
 SSO_REALM=3scale
 ```
 
+## How to authenticate with an `admin` user in the target realm
+
+If you prefer not to use the `admin` user of the `master` realm, you can create
+an `admin` user in the target realm (let's say, the realm `3scale`). Then, reset
+his password (make sure the "temporary password" option is NOT checked) and give
+him the administrative rights.
+
+To give him the administrative rights :
+ - go to the `Role Mapping` tab of your `admin` user
+ - under `Client Roles`, select `realm-management`
+ - pick the `manage-clients` role on the left pane
+ - click `Add selected >>` to give those administrative rights to your `admin` user
+
+Since your `admin` user is in the same realm as your clients, you can remove the
+`SSO_AUTH_REALM` environment variable.
+
 ## Developing a module
 
 If you plan to develop a module, you will have to export three methods from
